@@ -41,7 +41,7 @@ DEADLINE_ALERT_DAYS = 14
 def check_env():
     """Verify all required environment variables are set."""
     required = [
-        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
         "GOOGLE_SHEETS_ID",
