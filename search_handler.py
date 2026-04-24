@@ -61,42 +61,55 @@ HARD FILTERS — only include opportunities where ALL of the following are true:
 
 If nothing matching is found, return: []"""
 
-# Gemini model with Google Search grounding (free tier)
+# gemini-1.5-flash has a more reliable free tier than 2.0-flash
 _model = genai.GenerativeModel(
-    model_name="gemini-2.0-flash",
+    model_name="gemini-1.5-flash",
     tools=["google_search_retrieval"],
     system_instruction=SYSTEM_PROMPT,
 )
 
+# Seconds to wait between each query (free tier: 15 RPM = 1 per 4s, be conservative)
+DELAY_BETWEEN_QUERIES = 10
+MAX_RETRIES = 3
+
 
 def search_for_opportunities(query: str) -> list:
-    """Run a single search query using Gemini + Google Search grounding."""
-    try:
-        response = _model.generate_content(
-            f"Search query: {query}\n\n"
-            "Find real summer 2026 programs for students from Uzbekistan matching the criteria. "
-            "Return a JSON array only."
-        )
+    """Run a single search query using Gemini + Google Search grounding, with retry."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = _model.generate_content(
+                f"Search query: {query}\n\n"
+                "Find real summer 2026 programs for students from Uzbekistan matching the criteria. "
+                "Return a JSON array only."
+            )
 
-        text = response.text.strip()
+            text = response.text.strip()
+            text = re.sub(r"```json\s*", "", text)
+            text = re.sub(r"```\s*", "", text)
+            text = text.strip()
 
-        # Strip any accidental markdown fences
-        text = re.sub(r"```json\s*", "", text)
-        text = re.sub(r"```\s*", "", text)
-        text = text.strip()
+            json_match = re.search(r"\[.*\]", text, re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group())
+            return []
 
-        # Extract JSON array
-        json_match = re.search(r"\[.*\]", text, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
-        return []
-
-    except json.JSONDecodeError as e:
-        print(f"  ⚠ JSON parse error for '{query}': {e}")
-        return []
-    except Exception as e:
-        print(f"  ⚠ Search error for '{query}': {e}")
-        return []
+        except json.JSONDecodeError as e:
+            print(f"  ⚠ JSON parse error for '{query}': {e}")
+            return []
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "quota" in err.lower():
+                # Extract retry delay from error if available, else use backoff
+                wait = 30 * attempt
+                print(f"  ⏳ Rate limited (attempt {attempt}/{MAX_RETRIES}), waiting {wait}s...")
+                time.sleep(wait)
+                if attempt == MAX_RETRIES:
+                    print(f"  ⚠ Giving up on '{query}' after {MAX_RETRIES} attempts")
+                    return []
+            else:
+                print(f"  ⚠ Search error for '{query}': {e}")
+                return []
+    return []
 
 
 def run_all_searches() -> list:
@@ -144,9 +157,9 @@ def run_all_searches() -> list:
 
         print(f"     ✓ {added} new opportunities found")
 
-        # Rate limiting between searches
+        # Rate limiting between searches — be conservative on free tier
         if i < len(SEARCH_QUERIES):
-            time.sleep(2)
+            time.sleep(DELAY_BETWEEN_QUERIES)
 
     print(f"\n  📋 Total unique opportunities: {len(all_opportunities)}")
     return all_opportunities
