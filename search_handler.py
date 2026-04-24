@@ -1,32 +1,30 @@
 """
 search_handler.py
-Uses Google Gemini 2.0 Flash (FREE tier) with Google Search grounding
+Uses Google Gemini 1.5 Flash (FREE tier) with Google Search grounding
 to find summer 2026 opportunities for Uzbekistan students.
-
-Free tier limits: 1,500 requests/day, 15 RPM — plenty for daily runs.
-Get your free API key at: https://aistudio.google.com/apikey
 """
 
 import os
 import json
 import re
 import time
-import google.generativeai as genai
+from google import genai
+from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+# The new SDK automatically picks up the GEMINI_API_KEY environment variable.
+client = genai.Client()
 
-# Diverse queries to maximize coverage
 SEARCH_QUERIES = [
-    "fully funded summer internship 2026 Uzbekistan students apply",
-    "summer school program 2026 open Central Asia Uzbekistan scholarship",
-    "summer camp 2026 funded Uzbekistan eligible no application fee",
-    "DAAD summer school 2026 Uzbekistan Central Asia",
-    "ERASMUS+ summer school 2026 Uzbekistan eligible",
-    "summer research fellowship 2026 developing countries Uzbekistan",
-    "fully funded summer program 2026 undergraduate Uzbekistan",
+    "fully funded summer internship 2026 Uzbekistan international students",
+    "summer school program 2026 Central Asia Uzbekistan full scholarship",
+    "funded summer tech engineering internship 2026 international students Central Asia",
+    "DAAD summer school 2026 fully funded Uzbekistan eligible",
+    "ERASMUS+ summer school 2026 fully funded Uzbekistan",
+    "summer research fellowship 2026 developing countries no application fee",
+    "fully funded undergraduate summer program 2026 Uzbekistan",
     "United Nations summer 2026 internship Uzbekistan youth",
-    "summer school Europe 2026 scholarship Uzbekistan no fee",
-    "summer institute 2026 international students Uzbekistan funded",
+    "summer institute 2026 international students fully funded Europe Uzbekistan",
+    "free summer leadership program 2026 international students Uzbekistan"
 ]
 
 SYSTEM_PROMPT = """You are an expert research assistant specializing in finding international academic and professional opportunities for students from Uzbekistan.
@@ -61,26 +59,23 @@ HARD FILTERS — only include opportunities where ALL of the following are true:
 
 If nothing matching is found, return: []"""
 
-# gemini-1.5-flash has a more reliable free tier than 2.0-flash
-_model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
-    tools=["google_search_retrieval"],
-    system_instruction=SYSTEM_PROMPT,
-)
-
-# Seconds to wait between each query (free tier: 15 RPM = 1 per 4s, be conservative)
+MODEL_NAME = "gemini-1.5-flash"
 DELAY_BETWEEN_QUERIES = 10
 MAX_RETRIES = 3
-
 
 def search_for_opportunities(query: str) -> list:
     """Run a single search query using Gemini + Google Search grounding, with retry."""
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            response = _model.generate_content(
-                f"Search query: {query}\n\n"
-                "Find real summer 2026 programs for students from Uzbekistan matching the criteria. "
-                "Return a JSON array only."
+            # New GenAI syntax moves tools and system prompts into the config object
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=f"Search query: {query}\n\nFind real summer 2026 programs for students from Uzbekistan matching the criteria. Return a JSON array only.",
+                config=GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    tools=[Tool(google_search=GoogleSearch())],
+                    temperature=0.2, # Lower temp for more reliable JSON formatting
+                )
             )
 
             text = response.text.strip()
@@ -99,7 +94,6 @@ def search_for_opportunities(query: str) -> list:
         except Exception as e:
             err = str(e)
             if "429" in err or "quota" in err.lower():
-                # Extract retry delay from error if available, else use backoff
                 wait = 30 * attempt
                 print(f"  ⏳ Rate limited (attempt {attempt}/{MAX_RETRIES}), waiting {wait}s...")
                 time.sleep(wait)
@@ -110,7 +104,6 @@ def search_for_opportunities(query: str) -> list:
                 print(f"  ⚠ Search error for '{query}': {e}")
                 return []
     return []
-
 
 def run_all_searches() -> list:
     """
@@ -133,20 +126,16 @@ def run_all_searches() -> list:
             if not name or not link:
                 continue
 
-            # Deduplicate
             if link in seen_links or name in seen_names:
                 continue
 
-            # Hard filter: no application fee
             if float(opp.get("application_fee_usd", 0)) > 0:
                 continue
 
-            # Hard filter: cost under $700 for non-fully-funded
             if opp.get("funding_status") != "fully_funded":
                 if float(opp.get("estimated_cost_usd", 9999)) > 700:
                     continue
 
-            # Must be Uzbekistan eligible
             if not opp.get("uzbekistan_eligible", False):
                 continue
 
@@ -157,7 +146,6 @@ def run_all_searches() -> list:
 
         print(f"     ✓ {added} new opportunities found")
 
-        # Rate limiting between searches — be conservative on free tier
         if i < len(SEARCH_QUERIES):
             time.sleep(DELAY_BETWEEN_QUERIES)
 
