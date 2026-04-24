@@ -14,6 +14,14 @@ from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 # The new SDK automatically picks up the GEMINI_API_KEY environment variable.
 client = genai.Client()
 
+try:
+    print("Models supporting generateContent:")
+    for model in client.models.list():
+        if "generateContent" in model.supported_generation_methods:
+            print(f"- {model.name}")
+except Exception as e:
+    print("Caught exception while listing supported generation methods: ", e)
+
 SEARCH_QUERIES = [
     "fully funded summer internship 2026 Uzbekistan international students",
     "summer school program 2026 Central Asia Uzbekistan full scholarship",
@@ -59,7 +67,7 @@ HARD FILTERS — only include opportunities where ALL of the following are true:
 
 If nothing matching is found, return: []"""
 
-MODEL_NAME = "gemini-1.5-flash"
+MODEL_NAME = "gemini-2.5-flash"
 DELAY_BETWEEN_QUERIES = 10
 MAX_RETRIES = 3
 
